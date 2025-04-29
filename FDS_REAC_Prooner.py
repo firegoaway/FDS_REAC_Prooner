@@ -263,7 +263,7 @@ class FDSReacCalculator(QMainWindow):
         <li>ϑ<sub>H₂O</sub> = (W<sub>Fuel</sub> / W<sub>H₂O</sub>) × Y<sub>H₂O</sub></li>
         <li>ϑ<sub>N₂</sub> = 3.7619 × ϑ<sub>O₂</sub></li>
         </ol>
-        <p style="color: #475569; font-style: italic; margin-top: 10px;">Note: Y denotes yield (kg/kg or m²/kg for soot), ϑ denotes stoichiometric coefficient (moles).</p>
+        <p style="color: #475569; font-style: italic; margin-top: 10px;">Обратите внимание: Y обозначает выделение (кг/кг или Нп*м²/кг для дымообразующей способности), ϑ обозначает стехиометрический коэффициент (моли).</p>
         </div>
         """
         help_label = QLabel(help_text)
