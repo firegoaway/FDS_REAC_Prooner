@@ -494,7 +494,25 @@ class FDSReacCalculator(QMainWindow):
             # Рассчитать массу реагентов: -(Fuel + O2 + N2)
             # Это представляет собой общую массу топлива (-1) и воздуха (-V_O2 * [1 + 3.7619*(W_N2/W_O2)])
             mass_reactants = -(1 + V_O2 * (1 + 3.7619 * (self.W_N2 / self.W_O2)))
-            
+
+            # Определить компоненты и объемные доли для PRODUCTS на основе того, является ли HCl > 0
+            product_spec_ids = ['SOOT', 'CARBON DIOXIDE', 'CARBON MONOXIDE']
+            product_volume_fractions = [V_SOOT, V_CO2, V_CO]
+
+            if hcl_yield > 1e-9: # Использовать небольшой допуск для сравнения с плавающей запятой
+                product_spec_ids.append('HYDROGEN CHLORIDE')
+                product_volume_fractions.append(V_HCl)
+                final_product_index = 6
+            else:
+                final_product_index = 5 # Опустить HCl
+
+            product_spec_ids.extend(['WATER VAPOR', 'NITROGEN'])
+            product_volume_fractions.extend([V_H2O, V_N2])
+
+            # Отформатировать строки для SPEC
+            product_spec_id_str = ",".join([f"'{s}'" for s in product_spec_ids])
+            product_vf_str = ",".join([f"{v:.15f}" for v in product_volume_fractions])
+
             # Сгенерировать REAC строки
             reac_lines = f"""&SPEC ID='OXYGEN' LUMPED_COMPONENT_ONLY=.True./
 &SPEC ID='NITROGEN' LUMPED_COMPONENT_ONLY=.True./
@@ -503,12 +521,12 @@ class FDSReacCalculator(QMainWindow):
 &SPEC ID='HYDROGEN CHLORIDE' LUMPED_COMPONENT_ONLY=.True./
 &SPEC ID='WATER VAPOR' LUMPED_COMPONENT_ONLY=.True./
 &SPEC ID='SOOT' LUMPED_COMPONENT_ONLY=.True./
-&SPEC ID='{self.fuel_id}' MW={molar_mass}/
+&SPEC ID='{self.fuel_id}' MW={molar_mass}/ 
 &SPEC ID='AIR' BACKGROUND=.True. SPEC_ID(1:2)='OXYGEN','NITROGEN' VOLUME_FRACTION(1:2)=1,3.7619/
-&SPEC ID='PRODUCTS' SPEC_ID(1:6)='SOOT','CARBON DIOXIDE','CARBON MONOXIDE','HYDROGEN CHLORIDE','WATER VAPOR','NITROGEN' VOLUME_FRACTION(1:6)={V_SOOT:.15f},{V_CO2:.15f},{V_CO:.15f},{V_HCl:.15f},{V_H2O:.15f},{V_N2:.15f}/
+&SPEC ID='PRODUCTS' SPEC_ID(1:{final_product_index})={product_spec_id_str} VOLUME_FRACTION(1:{final_product_index})={product_vf_str}/
 &REAC FUEL='{self.fuel_id}' HEAT_OF_COMBUSTION={heat_release} SPEC_ID_NU(1:3)='{self.fuel_id}','AIR','PRODUCTS' NU(1:3)=-1,{mass_reactants:.4f},1 REAC_ATOM_ERROR=1E5 REAC_MASS_ERROR=1E4 CHECK_ATOM_BALANCE=.False./
 """
-            
+
             self.results_text.setText(reac_lines)
             self.copy_button.setEnabled(True)
             self.save_fds_button.setEnabled(self.imported_file_path is not None)
@@ -614,8 +632,10 @@ class FDSReacCalculator(QMainWindow):
             if heat_match:
                 params['heat_release'] = heat_match.group(1)
             
+            # Escape the fuel_id for use in regex
+            escaped_fuel_id = re.escape(fuel_id)
             # Извлечь MW из Fuel SPEC используя извлеченный ID топлива
-            mw_match = re.search(rf"&SPEC\s+ID=['\"]({fuel_id})['\"].*?MW\s*=\s*(\d+\.?\d*)", fds_content, re.DOTALL | re.IGNORECASE)
+            mw_match = re.search(rf"&SPEC\s+ID=['\"]({escaped_fuel_id})['\"].*?MW\s*=\s*(\d+\.?\d*)", fds_content, re.DOTALL | re.IGNORECASE)
             if mw_match:
                 params['molar_mass'] = mw_match.group(2)
                 molar_mass = float(params['molar_mass'])
@@ -627,71 +647,115 @@ class FDSReacCalculator(QMainWindow):
                 return
             
             # Извлечь VOLUME_FRACTION значения из PRODUCTS SPEC
-            products_match = re.search(r"&SPEC ID=['\"]PRODUCTS['\"].*?VOLUME_FRACTION\s*\(\s*1\s*:\s*6\s*\)\s*=\s*([\d\.E\-]+)\s*,\s*([\d\.E\-]+)\s*,\s*([\d\.E\-]+)\s*,\s*([\d\.E\-]+)\s*,\s*([\d\.E\-]+)\s*,\s*([\d\.E\-]+)", fds_content, re.DOTALL | re.IGNORECASE)
-            
+            # Regex to match 5 or 6 species, making HCl optional
+            products_pattern = r"&SPEC ID=['\"]PRODUCTS['\"]\s*.*?SPEC_ID\s*\(\s*1\s*:\s*(?P<count>[56])\s*\)\s*=\s*(?P<ids>.*?)\s*VOLUME_FRACTION\s*\(\s*1\s*:\s*(?P=count)\s*\)\s*=\s*(?P<vfs>[\d\.\s,E\-]+)/"
+            products_match = re.search(products_pattern, fds_content, re.DOTALL | re.IGNORECASE)
+
+            # Initialize V_ variables to None
+            V_SOOT, V_CO2, V_CO, V_HCl, V_H2O, V_N2 = None, None, None, None, None, None
+
             if products_match:
-                # Извлечь объемные доли
-                V_SOOT = float(products_match.group(1))
-                V_CO2 = float(products_match.group(2))
-                V_CO = float(products_match.group(3))
-                V_HCl = float(products_match.group(4))
-                V_H2O = float(products_match.group(5))
-                V_N2 = float(products_match.group(6))
+                count = int(products_match.group('count'))
+                ids_str = products_match.group('ids').strip()
+                vfs_str = products_match.group('vfs').strip()
                 
-                # Рассчитать выходы из объемных долей
-                params['soot_yield'] = str(round(V_SOOT * self.W_SOOT / molar_mass * 9500.0, 6))  # Преобразовать обратно в m²/kg
-                params['co2_yield'] = str(round(V_CO2 * self.W_CO2 / molar_mass, 6))
-                params['co_yield'] = str(round(V_CO * self.W_CO / molar_mass, 6))
-                params['hcl_yield'] = str(round(V_HCl * self.W_HCl / molar_mass, 6))
+                # Extract IDs and VFs
+                ids = [i.strip("' ") for i in ids_str.split(',')]
+                vfs = [float(v.strip()) for v in vfs_str.split(',')]
                 
-                # Рассчитать потребление O2 из N2
-                # ϑ_{N₂} = 3.7619*ϑ_{O₂}
-                V_O2 = V_N2 / 3.7619
-                params['o2_consumption'] = str(round(V_O2 * self.W_O2 / molar_mass, 6))
-            else:
-                # Попробовать извлечь NU значения из REAC
+                if len(ids) == count and len(vfs) == count:
+                    products_dict = dict(zip(ids, vfs))
+                    
+                    # Assign V_ variables based on found IDs
+                    V_SOOT = products_dict.get('SOOT')
+                    V_CO2 = products_dict.get('CARBON DIOXIDE')
+                    V_CO = products_dict.get('CARBON MONOXIDE')
+                    V_HCl = products_dict.get('HYDROGEN CHLORIDE') # Will be None if not present
+                    V_H2O = products_dict.get('WATER VAPOR')
+                    V_N2 = products_dict.get('NITROGEN')
+                    
+                    # Calculate yields if V_ variables are not None
+                    try:
+                        if V_SOOT is not None: params['soot_yield'] = str(round(V_SOOT * self.W_SOOT / molar_mass * 9500.0, 6))
+                        if V_CO2 is not None: params['co2_yield'] = str(round(V_CO2 * self.W_CO2 / molar_mass, 6))
+                        if V_CO is not None: params['co_yield'] = str(round(V_CO * self.W_CO / molar_mass, 6))
+                        if V_HCl is not None: # Only calculate if HCl was present
+                             params['hcl_yield'] = str(round(V_HCl * self.W_HCl / molar_mass, 6))
+                        else: # Explicitly set to 0 if HCl was not in PRODUCTS
+                             params['hcl_yield'] = "0.0"
+                             
+                        # Calculate O2 consumption from N2 if possible
+                        if V_N2 is not None:
+                            V_O2 = V_N2 / 3.7619
+                            params['o2_consumption'] = str(round(V_O2 * self.W_O2 / molar_mass, 6))
+                        # else: Attempt to calculate from NU values later
+                            
+                    except (ValueError, TypeError, ZeroDivisionError) as e:
+                        self.statusBar.showMessage(f"Warning: Error calculating yields from PRODUCTS - {e}")
+                else:
+                     self.statusBar.showMessage("Warning: Mismatch between count, IDs, and VFs in PRODUCTS line.")
+            
+            # Attempt to get O2 consumption from REAC NU values if not found from PRODUCTS
+            if 'o2_consumption' not in params:
                 nu_match = re.search(r'&REAC.*?NU\s*\(\s*1\s*:\s*3\s*\)\s*=\s*-1\s*,\s*([\-\d\.]+)', fds_content, re.DOTALL | re.IGNORECASE)
                 if nu_match:
-                    mass_reactants = float(nu_match.group(1))
-                    
-                    # mass_reactants = -(1 + V_O2 * (1 + 3.7619 * (W_N2/W_O2)))
-                    # Решить для V_O2
-                    V_O2 = -1 * (mass_reactants + 1) / (1 + 3.7619 * (self.W_N2/self.W_O2))
-                    
-                    # Если у нас есть некоторые значения, но не все, попробуйте рассчитать то, что мы можем
-                    if 'soot_yield' not in params and V_SOOT:
-                        params['soot_yield'] = str(round(V_SOOT * self.W_SOOT / molar_mass * 9500.0, 6))
-                    if 'co2_yield' not in params and V_CO2:
-                        params['co2_yield'] = str(round(V_CO2 * self.W_CO2 / molar_mass, 6))
-                    if 'co_yield' not in params and V_CO:
-                        params['co_yield'] = str(round(V_CO * self.W_CO / molar_mass, 6))
-                    if 'hcl_yield' not in params and V_HCl:
-                        params['hcl_yield'] = str(round(V_HCl * self.W_HCl / molar_mass, 6))
-                    
-                    params['o2_consumption'] = str(round(V_O2 * self.W_O2 / molar_mass, 6))
-            
-            # Если мы пропустили какие-либо параметры, попробуйте рассчитать их
-            if 'molar_mass' in params and 'soot_yield' in params and 'co2_yield' in params and 'co_yield' in params and 'o2_consumption' in params:
-                # Рассчитать выход HCl, если он отсутствует
-                if 'hcl_yield' not in params:
-                    params['hcl_yield'] = "0.0"  # Значение по умолчанию
-                
-                # Для пропущенных параметров мы могли бы попытаться рассчитать их из доступных, но для текущей версии мы просто предоставим то, что у нас есть
-            
-            # Обновить поля ввода с извлеченными данными
+                    try:
+                        mass_reactants = float(nu_match.group(1))
+                        # mass_reactants = -(1 + V_O2 * (1 + 3.7619 * (W_N2/W_O2)))
+                        V_O2 = -1 * (mass_reactants + 1) / (1 + 3.7619 * (self.W_N2/self.W_O2))
+                        params['o2_consumption'] = str(round(V_O2 * self.W_O2 / molar_mass, 6))
+                    except (ValueError, TypeError, ZeroDivisionError) as e:
+                         self.statusBar.showMessage(f"Warning: Could not parse/calculate O2 from REAC NU values - {e}")
+
+            # Default any missing yields (especially HCl if PRODUCTS wasn't parsed)
+            if 'hcl_yield' not in params: 
+                 params['hcl_yield'] = "0.0"
+            # Add defaults for others if needed, although they should ideally come from PRODUCTS
+            # if 'soot_yield' not in params: params['soot_yield'] = "0.0" # Or handle as error?
+            # ... etc for co2, co
+
+            # Обновить поля ввода с извлеченными/установленными по умолчанию данными
             updated_params = False
             for param, value in params.items():
                 if param in self.inputs:
                     self.inputs[param].setText(value)
                     updated_params = True
             
-            if updated_params:
-                # После заполнения полей ввода, пересчитайте, чтобы убедиться, что все значения согласованы
-                self.calculate_parameters(silent=True)
+            # Найти и извлечь оригинальный блок SPEC/REAC из файла
+            original_reac_block = ""
+            try:
+                # Найти все релевантные строки SPEC и REAC
+                spec_pattern = r"&SPEC ID='(?:OXYGEN|NITROGEN|CARBON DIOXIDE|CARBON MONOXIDE|HYDROGEN CHLORIDE|WATER VAPOR|SOOT|AIR|PRODUCTS|{})'.*?/\n".format(re.escape(self.fuel_id))
+                reac_pattern = r'&REAC.*?/\n'
                 
-                self.statusBar.showMessage("Параметры успешно импортированы из файла FDS.")
-                QMessageBox.information(self, "Успешный импорт", "Параметры успешно импортированы из файла FDS.")
+                all_matches = []
+                for pattern in [spec_pattern, reac_pattern]:
+                    all_matches.extend(list(re.finditer(pattern, fds_content, re.DOTALL | re.IGNORECASE)))
+                
+                if all_matches:
+                    all_matches.sort(key=lambda m: m.start())
+                    start_pos = all_matches[0].start()
+                    end_pos = all_matches[-1].end()
+                    original_reac_block = fds_content[start_pos:end_pos].strip()
+                else:
+                     original_reac_block = "# Не удалось извлечь оригинальный блок SPEC/REAC."
+                     
+            except Exception as find_err:
+                original_reac_block = f"# Ошибка при извлечении оригинального блока: {find_err}"
+
+            if updated_params:
+                # НЕ пересчитывать, просто показать оригинальный блок
+                # self.calculate_parameters(silent=True) # УДАЛИТЬ ЭТУ СТРОКУ
+                self.results_text.setText(original_reac_block)
+                self.copy_button.setEnabled(bool(original_reac_block)) # Включить копирование, если блок извлечен
+                self.save_fds_button.setEnabled(self.imported_file_path is not None) # Включить сохранение
+                
+                self.statusBar.showMessage("Параметры импортированы. Оригинальный блок REAC показан.")
+                QMessageBox.information(self, "Успешный импорт", "Параметры успешно импортированы из файла FDS.\nОригинальный блок SPEC/REAC показан в области результатов.")
             else:
+                self.results_text.clear() # Очистить результаты, если параметры не найдены
+                self.copy_button.setEnabled(False)
+                # Не отключать кнопку сохранения, так как файл был импортирован
                 self.statusBar.showMessage("В файле FDS не найдены допустимые параметры REAC.")
                 QMessageBox.warning(self, "Предупреждение при импорте", "В файле FDS не найдены допустимые параметры REAC.")
                 
