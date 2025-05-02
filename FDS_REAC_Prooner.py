@@ -2,6 +2,7 @@ import sys
 import traceback
 import re
 import os
+import time
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QLabel, QLineEdit, 
                             QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, 
                             QTextEdit, QMessageBox, QGroupBox, QStatusBar, QFileDialog, QFormLayout,
@@ -539,9 +540,8 @@ class FDSReacCalculator(QMainWindow):
                 orig_style = self.results_text.styleSheet()
                 self.results_text.setStyleSheet("background-color: rgba(187, 247, 208, 150); border: 1px solid #4ade80;")
                 
-                # Reset after a delay (this is simplified - in a real app you might use QTimer)
+                # Сбросить после задержки
                 QApplication.processEvents()
-                import time
                 time.sleep(0.5)
                 self.results_text.setStyleSheet(orig_style)
             else:
@@ -575,7 +575,6 @@ class FDSReacCalculator(QMainWindow):
             
             # Сбросить после задержки
             QApplication.processEvents()
-            import time
             time.sleep(0.3)
             self.copy_button.setStyleSheet(orig_style)
             
@@ -856,7 +855,7 @@ class FDSReacCalculator(QMainWindow):
                 min-width: 120px;
             """)
             
-            # Reset after a delay
+            # Сбросить после задержки
             QApplication.processEvents()
             import time
             time.sleep(0.3)
