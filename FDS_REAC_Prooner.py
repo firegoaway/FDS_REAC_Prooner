@@ -18,7 +18,7 @@ class FDSReacCalculator(QMainWindow):
         icon_path = os.path.join(parent_directory, '.gitpics', 'favicon.ico')
         self.setWindowIcon(QIcon(icon_path))
         # Устанавливаем заголовок окна  
-        self.setWindowTitle("FRP v1.0")
+        self.setWindowTitle("FRP v1.1")
         self.setMinimumSize(1280, 720)  # Устанавливаем минимальный размер окна
         
         # Держим путь к импортированному файлу
@@ -84,7 +84,7 @@ class FDSReacCalculator(QMainWindow):
         main_layout.setSpacing(15)
         
         # Заголовок/заголовок приложения
-        header = QLabel("Калькулятор параметров сложной стехиометрии в реакторе FDS 6.8.0")
+        header = QLabel("Калькулятор параметров сложной стехиометрии в реакторе FDS 6\n(поддерживаемые версии FDS: 6.8.0 - 6.10.1)")
         header.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setStyleSheet("color: rgb(3, 105, 161); padding: 10px;")
